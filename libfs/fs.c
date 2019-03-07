@@ -82,9 +82,9 @@ int fs_mount(const char *diskname)
 		return -1;
 
 	// alocate memory for FAT
-	FAT = malloc(spblk->fat_blk_count * BLOCK_SIZE);
+	FAT = malloc(spblk->data_blk_count * BLOCK_SIZE);
 
-	for(int i=0; i<spblk->fat_blk_count; i++)
+	for(int i=0; i<spblk->data_blk_count; i++)
 		block_read( i+1, (void *)(FAT + (BLOCK_SIZE/sizeof(FAT))*i) );
 
 	// alocate memory for Root Directory
@@ -134,6 +134,10 @@ int fs_info(void)
 	printf("fat_free_ratio=%d/%d\n", fat_free_count, spblk->data_blk_count);
 	printf("rdir_free_ratio=%d/%d\n", rdir_free_count, FS_FILE_MAX_COUNT);
 
+	for(int i=0;i<spblk->data_blk_count;i++)
+	{
+		printf("FAT entry #%d: %d\n", i, FAT[i]);
+	}
 	return 0;
 }
 
@@ -173,6 +177,26 @@ int fs_create(const char *filename)
 	return 0;
 }
 
+void delete_blocks(struct DirectoryEntry * target)
+{
+	uint16_t curr = target->dblk_i;
+	uint16_t prev;
+	
+	target->dblk_i = 0;
+
+	if(curr == FAT_EOC)
+		return;
+
+	while(FAT[curr] != FAT_EOC)
+	{
+		prev = curr;
+		curr = FAT[curr];
+		FAT[prev] = 0;
+	}
+	FAT[curr] = 0;
+
+}
+
 int fs_delete(const char *filename)
 {
 
@@ -191,8 +215,10 @@ int fs_delete(const char *filename)
 	
 	strcpy((char *)target_entry->filename, "");
 	target_entry->filesize = 0;
-	target_entry->dblk_i = 0;
+	delete_blocks(target_entry);
 
+	for(int i=0; i<spblk->fat_blk_count; i++)
+		block_write( i+1, (void *)(FAT + (BLOCK_SIZE/sizeof(FAT))*i) );
 	block_write(spblk->rdir_blk, rtdir);
 	return 0;
 }
@@ -204,7 +230,7 @@ int fs_ls(void)
 
 	for(int i=0; i<FS_FILE_MAX_COUNT; i++)
 		if(strcmp((char *)rtdir[i].filename,"") != 0)
-			printf("file: %s, size: %d, data_blk: %x\n", rtdir[i].filename, rtdir[i].filesize, rtdir[i].dblk_i);
+			printf("file: %s, size: %d, data_blk: %d\n", rtdir[i].filename, rtdir[i].filesize, rtdir[i].dblk_i);
 
 	return 0;
 }
@@ -278,21 +304,51 @@ int fs_lseek(int fd, size_t offset)
 }
 
 int get_dblk_i(int fd){
-	
 
 	uint16_t curr = fd_table[fd].file->dblk_i;
 	int num_hops = fd_table[fd].offset / BLOCK_SIZE;
 
-	printf("Traversing FAT to find current block: ");
-
 	for(int i=0;i<num_hops;i++)
 	{
-		printf("%d->",curr);
-		curr = FAT[curr];
+		curr = FAT[curr]; 
 	}
 	
-	printf("curr = data block %d\n", curr);
 	return curr;
+}
+
+uint16_t extend_file(int fd)
+{
+	uint16_t curr = fd_table[fd].file->dblk_i;
+	uint16_t new_block = 0;
+
+	//find a new block
+	for(int i=0;i<spblk->data_blk_count;i++)
+		if(FAT[i] == 0)
+		{
+			new_block = i;
+			break;
+		}
+
+	//no more space in disk
+	if(new_block == 0)
+		return -1;
+
+	//go to the last block of this file
+	if(curr != FAT_EOC)
+		while(FAT[curr] != FAT_EOC)
+			curr = FAT[curr];
+
+	//chain the new block with the file
+	if(curr == FAT_EOC)
+		fd_table[fd].file->dblk_i = new_block;
+	else
+	{
+		FAT[curr] = new_block;
+	}
+	FAT[new_block] = FAT_EOC;
+
+	//return the index of the new block
+	return new_block;
 }
 
 int fs_write(int fd, void *buf, size_t count)
@@ -303,9 +359,58 @@ int fs_write(int fd, void *buf, size_t count)
 	if(fd_table[fd].file == 0)
 		return -1;
 
-	/*TODO Phase FOOOUURRRR!!!*/
+	unsigned char * bounce_buf;
+	bounce_buf = malloc(BLOCK_SIZE);
+	int curr_dblk_offset;
+	int curr_dblk_i;
+	int bytes_written = 0;
+	int write_to_curr_dblk;
+
+	curr_dblk_i = get_dblk_i(fd);
+	curr_dblk_offset = fd_table[fd].offset % BLOCK_SIZE;
+
+	while(bytes_written != count)
+	{
+		if(curr_dblk_i == FAT_EOC)
+		{
+			curr_dblk_i = extend_file(fd);
+			//disk full; return the amount written to disk so far
+			if(curr_dblk_i == -1)
+				break;
+		}
+		
+		if(block_read(spblk->data_blk + curr_dblk_i, bounce_buf) == -1)
+			return 0;
+
+		//we need more blocks
+		if(curr_dblk_offset+count-bytes_written > BLOCK_SIZE)
+		{
+			write_to_curr_dblk = BLOCK_SIZE - curr_dblk_offset;
+		}
+		else
+		{
+			write_to_curr_dblk = count - bytes_written;
+		}
+
+		memcpy((char *)&bounce_buf[curr_dblk_offset], (char *)(buf+bytes_written), write_to_curr_dblk);
+		block_write(spblk->data_blk + curr_dblk_i, bounce_buf);
+
+		bytes_written += write_to_curr_dblk;
+		
+		curr_dblk_i = FAT[curr_dblk_i];
+		curr_dblk_offset = 0;
+
+	}
+
+	fd_table[fd].offset += bytes_written;
+	if(fd_table[fd].offset > fd_table[fd].file->filesize)
+		fd_table[fd].file->filesize += bytes_written;
+
+	for(int i=0; i<spblk->fat_blk_count; i++)
+		block_write( i+1, (void *)(FAT + (BLOCK_SIZE/sizeof(FAT))*i) );
+	block_write(spblk->rdir_blk, rtdir);
 	
-	return 0;
+	return bytes_written;
 }
 
 int fs_read(int fd, void *buf, size_t count)
@@ -316,35 +421,29 @@ int fs_read(int fd, void *buf, size_t count)
 	if(fd_table[fd].file == 0)
 		return -1;
 
-	if(buf == NULL)
-		exit(1);
-
 	if(fd_table[fd].offset == fd_table[fd].file->filesize)
 	{
-		printf("Offset is pointed at FAT_EOC. Exiting fs_read()...\n");
 		return 0;
 	}
 
 	unsigned char * bounce_buf;
 	bounce_buf = malloc(BLOCK_SIZE);
+
 	int curr_dblk_offset;
 	uint16_t curr_dblk_i;
 	int bytes_read = 0;
 	int need_from_curr_dblk;
 
-	printf("\nReading %lu bytes from <%s> (size: %d bytes) with offset %d\n", 
-		count, fd_table[fd].file->filename, fd_table[fd].file->filesize, fd_table[fd].offset);
 
 	if(count > fd_table[fd].file->filesize - fd_table[fd].offset)
 	{
 		count = fd_table[fd].file->filesize - fd_table[fd].offset;
-		printf("Warning: trying to read past the end of file. Will only read %lu bytes\n", count);
 	}
 
 	curr_dblk_i = get_dblk_i(fd);
 
 	if(block_read(spblk->data_blk + curr_dblk_i, bounce_buf) == -1)
-		return -1;
+		return 0;
 
 	curr_dblk_offset = fd_table[fd].offset % BLOCK_SIZE;
 
@@ -354,12 +453,10 @@ int fs_read(int fd, void *buf, size_t count)
 		if(curr_dblk_offset + count - bytes_read > BLOCK_SIZE)
 		{
 			need_from_curr_dblk = BLOCK_SIZE - curr_dblk_offset;
-			printf("Need to access next block: reading %d bytes from this block\n", need_from_curr_dblk);
 		}
 		else
 		{
 			need_from_curr_dblk = count - bytes_read;
-			printf("Last block: reading %d bytes from this block\n", need_from_curr_dblk);
 		}
 		
 		memcpy((char *)(buf+bytes_read), (char *)&bounce_buf[curr_dblk_offset], need_from_curr_dblk);
@@ -369,24 +466,15 @@ int fs_read(int fd, void *buf, size_t count)
 		curr_dblk_i = FAT[curr_dblk_i];
 		if(curr_dblk_i != FAT_EOC)
 			if(block_read(spblk->data_blk + curr_dblk_i, bounce_buf) == -1)
-				return -1;
+			{
+				printf("spblk->data_blk = %d\ncurr_dblk_i=%d\n",spblk->data_blk, curr_dblk_i);
+				printf("Block count = %d",block_disk_count());
+				return 0;
+			}
 
 		curr_dblk_offset = 0;
-		printf("bytes_read: %d\n", bytes_read);
 	}
 
-	printf("\n-------Data from offset %d to %d---------\n",curr_dblk_offset,curr_dblk_offset+ need_from_curr_dblk);
-	unsigned char * ch = buf;
-	for(int i=0;i<count;i++)
-	{	
-		printf("%02x",ch[i]);
-		
-		if((i+1)%2 == 0)
-			printf(" ");
-		if((i+1)%16 == 0)
-			printf("\n");
-	}
-	printf("---------------------------------------------\n\n");
 
 	fd_table[fd].offset += bytes_read;
 
