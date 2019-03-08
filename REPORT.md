@@ -153,3 +153,8 @@ executed. Also, DATA_SIZE was changed to try to write more than the available
 data space to see if the write operation stops when the available data space 
 was depleted.
 
+## Testing
+In addition to the given `test_fs.c`, other test files like `mytest.c`and `unit_test.c`
+were used to ensure that the FS API was correctly working, and that incorrect operations
+would result in the correct return value.
+
