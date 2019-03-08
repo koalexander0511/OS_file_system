@@ -103,3 +103,8 @@ the file descriptor parameter. A helper function `extend_file` is used
 to allocate a new data block and link it to the end of the file's
 data block chain in a first-fit strategy. 
 
+## Testing
+In addition to the given `test_fs.c`, other test files like `mytest.c`and `unit_test.c`
+were used to ensure that the FS API was correctly working, and that incorrect operations
+would result in the correct return value.
+
