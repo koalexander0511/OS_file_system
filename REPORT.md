@@ -27,7 +27,7 @@ struct __attribute__ ((__packed__)) Superblock
 };
 ```
 
-The Root directory is represented by a data structure with 4 elements:
+The Root Directory is represented by a data structure with 4 elements:
 the filename, filesize, index of first data block, and unused elements.
  ```c
 struct __attribute__ ((__packed__)) DirectoryEntry
@@ -71,19 +71,35 @@ parameter of `fs_create`, with the Directory Entry's filesize set to
 API is used to write the content into the virtual disk's block.
 
 ## File deletion
+File deletion is done with `fs_delete` and begins with checking relevant
+conditions e.g. the existance of the targeted file. Afterwards, the file
+entry is emptied and all data blocks which has the file's content is 
+freed in the FAT. This is facilitated with the helper function
+`delete_blocks` which zeroes out the entry.
 
-
-## File listing
 
 ## File opening
+File opening is done with `fs_open` which returns a file descriptor
+for further operations on the file. The global File Descriptor struct
+has its file element pointing to the opened file, and File Descriptor
+offset is set to 0. In addition, `num_open` is incremented to show the
+new count of opened file.
 
 ## File closing
-
-## File lseek
-
-## File stat
+File closing is done with `fs_close` and has the global File Descriptor
+struct's file element set to 0 (no longer pointing to the previously 
+opened file), and its offset is once again set to 0. `num_open` is 
+decremented to show the new count.
 
 ## File reading
+The function `fs_read` is used to read from a file referenced by the
+file descriptor parameter. A helper function `get_dblk_i` 
+is used to return the index of the data block corresponding to 
+the file's offset.
 
 ## File writing
+The function `fs_write` is used to write into the file referenced by
+the file descriptor parameter. A helper function `extend_file` is used
+to allocate a new data block and link it to the end of the file's
+data block chain in a first-fit strategy. 
 
