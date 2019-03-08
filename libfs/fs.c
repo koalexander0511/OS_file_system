@@ -98,15 +98,20 @@ int fs_mount(const char *diskname)
 
 int fs_umount(void)
 {
-	if(block_disk_close())
+	if(num_open != 0)
 		return -1;
 
-	if(num_open != 0)
+	if(block_disk_close())
 		return -1;
 	
 	free(spblk);
 	free(FAT);
 	free(rtdir);
+
+	spblk = NULL;
+	FAT = NULL;
+	rtdir = NULL;
+
 	return 0;
 }
 
@@ -290,7 +295,7 @@ int fs_lseek(int fd, size_t offset)
 	if(fd_table[fd].file == 0)
 		return -1;
 	
-	if(fd_table[fd].file->filesize < offset)
+	if(fd_table[fd].file->filesize < offset || offset < 0)
 		return -1;
 
 	fd_table[fd].offset = offset;
