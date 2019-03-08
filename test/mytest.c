@@ -5,8 +5,8 @@
 #include <unistd.h>
 
 #include <fs.h>
-#define DATA_SIZE 1024
-#define BUF_SIZE 128
+#define DATA_SIZE 12288
+#define BUF_SIZE 4096
 
 int main(int argc, char **argv)
 {
@@ -16,14 +16,15 @@ int main(int argc, char **argv)
 	char buf[BUF_SIZE];
 	char data[DATA_SIZE];
 
-	fs_mount(filename);
+	if(fs_mount(filename) == -1)
+		return -1;
 	fs_create("test1");
 	int fd = fs_open("test1");
 
-	for(int i=0;i<38;i++)
+	for(int i=0;i<2;i++)
 	{
-		memset(data, 'A'+i%26, DATA_SIZE);
-		printf("Writing %.*s\n",DATA_SIZE,data);
+		memset(data, '0'+i%10, DATA_SIZE);
+		printf("Writing: '%.*s...'\n",10,data);
 		fs_write(fd, data, DATA_SIZE);
 	}
 
@@ -31,7 +32,7 @@ int main(int argc, char **argv)
 
 	while(fs_read(fd, buf, BUF_SIZE))
 	{
-		printf("%.*s\n",BUF_SIZE,buf);
+		printf("Read: '%.*s...'\n",10,buf);
 	}
 
 	fs_info();

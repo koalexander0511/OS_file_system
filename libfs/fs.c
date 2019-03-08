@@ -70,7 +70,7 @@ int fs_mount(const char *diskname)
 	fd_table = malloc(sizeof(struct FileDescriptor)*FS_OPEN_MAX_COUNT);
 	memset(fd_table, 0, sizeof(struct FileDescriptor)*FS_OPEN_MAX_COUNT);
 
-	if (block_disk_open(diskname) != 0)
+	if (block_disk_open(diskname) == -1)
 		return -1;
 
 	spblk = (struct Superblock *)malloc(BLOCK_SIZE); 
@@ -133,11 +133,6 @@ int fs_info(void)
 	printf("data_blk_count=%d\n", spblk->data_blk_count);
 	printf("fat_free_ratio=%d/%d\n", fat_free_count, spblk->data_blk_count);
 	printf("rdir_free_ratio=%d/%d\n", rdir_free_count, FS_FILE_MAX_COUNT);
-
-	for(int i=0;i<spblk->data_blk_count;i++)
-	{
-		printf("FAT entry #%d: %d\n", i, FAT[i]);
-	}
 	return 0;
 }
 
@@ -323,15 +318,17 @@ uint16_t extend_file(int fd)
 
 	//find a new block
 	for(int i=0;i<spblk->data_blk_count;i++)
+	{
 		if(FAT[i] == 0)
 		{
 			new_block = i;
 			break;
 		}
+	}
 
 	//no more space in disk
 	if(new_block == 0)
-		return -1;
+		return 0;
 
 	//go to the last block of this file
 	if(curr != FAT_EOC)
@@ -375,7 +372,7 @@ int fs_write(int fd, void *buf, size_t count)
 		{
 			curr_dblk_i = extend_file(fd);
 			//disk full; return the amount written to disk so far
-			if(curr_dblk_i == -1)
+			if(!curr_dblk_i)
 				break;
 		}
 		
@@ -466,11 +463,7 @@ int fs_read(int fd, void *buf, size_t count)
 		curr_dblk_i = FAT[curr_dblk_i];
 		if(curr_dblk_i != FAT_EOC)
 			if(block_read(spblk->data_blk + curr_dblk_i, bounce_buf) == -1)
-			{
-				printf("spblk->data_blk = %d\ncurr_dblk_i=%d\n",spblk->data_blk, curr_dblk_i);
-				printf("Block count = %d",block_disk_count());
 				return 0;
-			}
 
 		curr_dblk_offset = 0;
 	}
